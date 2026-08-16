@@ -1,12 +1,26 @@
 # CivicSignal
 
+**Live: https://civicsignal-git-main-rayhansadiq1.vercel.app**
+
 A full-stack project that pulls real city/county legislation data and uses
 an LLM to turn it into "buying signals": a scored, categorized, plain
 English summary of why a given piece of legislation might matter to a
 vendor selling into government. Built as a portfolio project for a
 NationGraph software engineering internship application.
 
-**Status: Stage 2. Backend and dashboard both working.**
+> The API runs on a free tier that sleeps after 15 minutes idle. The first
+> load may take up to a minute while it wakes; the UI shows a waking state
+> rather than an error while that happens.
+
+## A real result
+
+The highest-scoring record the pipeline found, unedited:
+
+> **90 / Renewal** - Oakland is authorizing a two-year, $1.08 million
+> cooperative contract renewal with NEOGOV for HRIS subscription services.
+
+A named incumbent vendor, a dollar figure, and a renewal window, extracted
+from a council agenda nobody was reading. That is the product in one row.
 
 ## Why this project
 
@@ -57,7 +71,62 @@ civicsignal/
 └── docker-compose.yml     # Postgres
 ```
 
+## Architecture
+
+| Layer | Service | Why |
+|---|---|---|
+| Frontend | Vercel | Free, auto-deploys from GitHub, built by the Next.js team |
+| API | Render | Free Python hosting, 750 instance-hours/month |
+| Database | Neon (Postgres) | Free plan is permanent and needs no card |
+
+**Render's own free Postgres was rejected**: it is deleted after 30 days,
+which would silently break the demo about a month after deployment. Neon's
+free tier persists.
+
+Ingestion and LLM scoring run as local operator scripts against the
+deployed database, not in the request path. That is a deliberate limitation
+rather than an oversight; scheduling them is listed under What's next.
+
 ## Engineering notes
+
+### Cold starts are handled as a state, not an error
+
+Render's free tier sleeps after 15 minutes idle and takes about a minute to
+wake. A naive client treats the first failed request as an outage, so the
+first visitor of the day is told the site is broken while it is in fact
+starting up.
+
+`lib/api.ts` retries with capped exponential backoff for up to 90 seconds and
+reports progress through an `onRetry` callback, so the UI can show "waking
+up" with a live counter. Two distinctions do the real work:
+
+- **4xx fails immediately.** Retrying will not fix a malformed query.
+- **5xx and network failures retry.** That is what a platform returns while
+  a service boots.
+
+`ApiUnreachableError` is separate from `ApiError` because "nothing answered"
+and "the server said no" are different problems and deserve different copy.
+
+`/health` deliberately does not touch the database. A health check that
+queries Postgres reports the service as down whenever Neon is merely asleep,
+which would make the platform restart a perfectly healthy process.
+
+### CORS is scoped, including preview deployments
+
+Vercel gives every deployment and every preview branch its own hostname, so
+an exact allowlist is unmaintainable. The API accepts a regex:
+
+```
+^https://civicsignal[a-z0-9-]*\.vercel\.app$
+```
+
+Anchored at both ends on purpose. An unanchored pattern would also match
+`https://evil.com/?x=civicsignal-a.vercel.app` and
+`https://civicsignal-x.vercel.app.evil.com`, which is the standard way
+origin checks get bypassed. Tested against both.
+
+Not `allow_origins=["*"]`. The data is public today, but a wildcard is a
+habit that becomes a real problem the moment an endpoint stops being public.
 
 ### The LLM layer is provider-agnostic
 
@@ -175,10 +244,10 @@ If that returns JSON (not an error), it works.
 
 ## What's next
 
-- Deploy: Vercel for the frontend, Neon for Postgres, Render for the API
-- Handle free-tier cold starts in the UI without reporting a false error
 - Ingest more cities so the dataset reflects the scale of the problem
 - Test coverage for the JSON parsing and score validation
+- Schedule ingestion instead of running it by hand
+- Pagination, needed before the dataset outgrows the 200-record cap
 
 ## A note on data
 

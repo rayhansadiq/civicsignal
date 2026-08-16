@@ -21,6 +21,12 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // True once a request has failed at least once and we are retrying. Drives
+  // the "waking up" message: without it, a cold start is indistinguishable
+  // from an outage and the page would wrongly claim to be broken.
+  const [waking, setWaking] = useState(false);
+  const [waitedSeconds, setWaitedSeconds] = useState(0);
+
   // Debounce the search box so we don't fire a request per keystroke.
   const [debouncedQ, setDebouncedQ] = useState(q);
   useEffect(() => {
@@ -30,15 +36,27 @@ export default function Home() {
 
   useEffect(() => {
     let cancelled = false;
+    const controller = new AbortController();
 
     async function load() {
       setLoading(true);
       setError(null);
+      setWaking(false);
+      setWaitedSeconds(0);
+
+      const onRetry = ({ elapsedMs }: { elapsedMs: number }) => {
+        if (cancelled) return;
+        setWaking(true);
+        setWaitedSeconds(Math.round(elapsedMs / 1000));
+      };
 
       try {
         const [signalsRes, statsRes] = await Promise.all([
-          fetchSignals({ q: debouncedQ, client, category, minScore }),
-          fetchStats(),
+          fetchSignals(
+            { q: debouncedQ, client, category, minScore },
+            { onRetry, signal: controller.signal }
+          ),
+          fetchStats({ signal: controller.signal }),
         ]);
 
         // Guard against a slow earlier request resolving after a newer one
@@ -47,12 +65,15 @@ export default function Home() {
 
         setSignals(signalsRes.results);
         setStats(statsRes);
+        setWaking(false);
       } catch (e) {
-        if (cancelled) return;
+        if (cancelled || (e instanceof DOMException && e.name === "AbortError")) {
+          return;
+        }
         setError(
           e instanceof ApiError
             ? e.message
-            : "Something went wrong loading signals."
+            : "Couldn't load signals. The API may be temporarily unavailable."
         );
       } finally {
         if (!cancelled) setLoading(false);
@@ -62,6 +83,7 @@ export default function Home() {
     load();
     return () => {
       cancelled = true;
+      controller.abort();
     };
   }, [debouncedQ, client, category, minScore]);
 
@@ -95,16 +117,22 @@ export default function Home() {
         <div className="rounded-lg border border-red-900 bg-red-950/40 p-6 text-sm text-red-300">
           <p className="font-medium">{error}</p>
           <p className="mt-2 text-red-300/80">
-            Start it with{" "}
-            <code className="rounded bg-red-950 px-1.5 py-0.5">
-              uvicorn main:app --reload --port 8000
-            </code>{" "}
-            from the <code>backend/</code> folder, with the venv active.
+            This demo runs on free-tier hosting. Try reloading in a minute.
           </p>
         </div>
       ) : loading ? (
-        <div className="rounded-lg border border-border bg-card p-12 text-center text-muted-foreground">
-          Loading signals…
+        <div className="rounded-lg border border-border bg-card p-12 text-center">
+          {waking ? (
+            <>
+              <p className="text-foreground">Waking up the API...</p>
+              <p className="mt-2 text-sm text-muted-foreground">
+                The backend sleeps after 15 minutes of inactivity on the free
+                tier and takes about a minute to start. Waited {waitedSeconds}s.
+              </p>
+            </>
+          ) : (
+            <p className="text-muted-foreground">Loading signals...</p>
+          )}
         </div>
       ) : (
         /*
@@ -113,8 +141,7 @@ export default function Home() {
           detail below the table, which at most window sizes was off-screen,
           so the click looked like it did nothing.
 
-          Below `xl` it stacks back to one column, where the detail sits under
-          the table and `scroll-mt` keeps it clear of the viewport edge.
+          Below `xl` it stacks back to one column.
         */
         <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
           <SignalTable

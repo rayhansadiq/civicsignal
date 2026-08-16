@@ -25,21 +25,34 @@ app = FastAPI(title="CivicSignal API", version="0.2.0")
 
 # Which browser origins may call this API.
 #
-# Comma-separated so local dev and the deployed frontend can both work:
-#   ALLOWED_ORIGINS=http://localhost:3000,https://civicsignal.vercel.app
-#
-# Deliberately not "*". This API is read-only public data today, but a
-# wildcard is a habit that becomes a real problem the moment any endpoint
-# stops being public. Scoping it now costs nothing.
+# Comma-separated exact origins, for local dev and any custom domain:
+#   ALLOWED_ORIGINS=http://localhost:3000,https://civicsignal.example.com
 ALLOWED_ORIGINS = [
     origin.strip()
     for origin in os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
     if origin.strip()
 ]
 
+# Vercel gives every single deployment its own immutable URL, and every
+# preview branch another one, so an exact allowlist is unmaintainable: the
+# hostname changes on every push. This pattern matches the project's own
+# deployments and nothing else.
+#
+# Deliberately anchored at both ends. An unanchored pattern would also match
+# something like https://evil.com/?x=civicsignal-.vercel.app, which is the
+# classic way origin checks get bypassed.
+ALLOWED_ORIGIN_REGEX = os.getenv(
+    "ALLOWED_ORIGIN_REGEX",
+    r"^https://civicsignal[a-z0-9-]*\.vercel\.app$",
+)
+
+# Still not "*". This API serves read-only public data today, but a wildcard
+# is a habit that becomes a real problem the moment any endpoint stops being
+# public, and it costs nothing to scope it now.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=ALLOWED_ORIGIN_REGEX,
     allow_methods=["GET"],
     allow_headers=["*"],
 )
