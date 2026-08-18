@@ -1,10 +1,9 @@
 """
 Turns raw Legistar records into "buying signals" using an LLM.
 
-This is the part of the project that maps most directly to NationGraph's
-actual product: taking a messy public agenda item and extracting something
-a sales/BD person can act on: a score, a category, and a one-line reason
-"why this matters right now."
+This is where the project earns its name: taking a messy public agenda item
+and extracting something a sales or BD person can act on, namely a score, a
+category, and a one-line reason "why this matters right now."
 
 Provider-agnostic by design: it talks to any OpenAI-compatible chat API.
 By default it points at Google's Gemini endpoint (which has a free tier and

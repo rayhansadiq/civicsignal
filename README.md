@@ -5,8 +5,7 @@
 A full-stack project that pulls real city/county legislation data and uses
 an LLM to turn it into "buying signals": a scored, categorized, plain
 English summary of why a given piece of legislation might matter to a
-vendor selling into government. Built as a portfolio project for a
-NationGraph software engineering internship application.
+vendor selling into government.
 
 > The API runs on a free tier that sleeps after 15 minutes idle. The first
 > load may take up to a minute while it wakes; the UI shows a waking state
@@ -24,10 +23,15 @@ from a council agenda nobody was reading. That is the product in one row.
 
 ## Why this project
 
-NationGraph's product turns millions of public-sector sources into buying
-signals for companies selling to cities, counties, states, schools, and
-special districts. This project is a small, honest version of that same
-idea, using a real public data source:
+Companies that sell to government have a discovery problem. The signals are
+public by law: every contract renewal, every new initiative, every budget
+line is published in a council agenda. But they are spread across thousands
+of cities, counties, school districts, and special districts, written in
+procedural language, and buried in documents nobody reads. By the time a
+vendor hears about a renewal, it has usually already been decided.
+
+This project is a small, honest version of the tool that fixes that, built
+on a real public data source:
 
 1. **Ingest** real legislation and agenda data from **Legistar**, the
    platform hundreds of U.S. cities and counties actually use to publish
@@ -368,10 +372,3 @@ If that returns JSON (not an error), it works.
 - Pagination, needed before the dataset outgrows the 200-record cap
 - Alembic migrations, so a schema change does not need a hand-written
   `ALTER TABLE` against the deployed database
-
-## A note on data
-
-Legistar captures official city/county legislative records: introduced
-ordinances, resolutions, reports, and agenda items. That is a close
-match to what NationGraph actually watches (city council and county board
-activity).

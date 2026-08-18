@@ -3,8 +3,8 @@ Database setup for CivicSignal.
 
 One table, on purpose: `matters` holds a raw Legistar record (a piece of
 city/county legislation or agenda item) plus the AI-derived "buying signal"
-fields once ai_signals.py has processed it. Simple enough to explain end to
-end in an interview, structured the way a real signal product would need.
+fields once ai_signals.py has processed it. Small enough to hold in your head
+end to end, structured the way a real signal product would need.
 """
 
 import os
