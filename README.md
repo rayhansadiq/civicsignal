@@ -58,10 +58,12 @@ across every city, county, and school district in the country.
 ```
 civicsignal/
 ├── backend/
-│   ├── main.py            # FastAPI: /api/signals, /api/stats
+│   ├── main.py            # FastAPI: /health, /api/signals, /api/clients, /api/stats
 │   ├── ingest.py          # Pulls real legislation from Legistar
 │   ├── ai_signals.py      # Scores + summarizes matters with an LLM
-│   ├── db.py              # SQLAlchemy models + session
+│   ├── db.py              # SQLAlchemy model + session
+│   ├── migrate_db.py      # Copies rows between databases (local -> Neon)
+│   ├── tests/             # pytest: parsing, validation, endpoints, CORS
 │   └── requirements.txt
 ├── frontend/
 │   ├── app/               # Next.js App Router pages + Redux provider
@@ -144,6 +146,32 @@ Two consequences worth knowing:
 - The free tier allows ~10 requests/minute, so the script paces itself and
   retries with backoff. `--limit N` caps a run to protect a daily quota.
 
+### Tests target the code most likely to be silently wrong
+
+```bash
+cd backend
+pip install -r requirements-dev.txt
+python -m pytest tests/ -q          # 70 tests
+```
+
+The suite concentrates on `extract_json()` and `validate()`, the two
+functions standing between an LLM's output and the database. Everything
+else in the pipeline fails loudly: a bad request 500s, a broken query
+raises. A bad parse or an unclamped score writes plausible-looking wrong
+data that then appears in the dashboard as fact. So those get the hard
+cases: markdown fences, chatty preambles, nested objects, a score of 150,
+a category the model invented.
+
+`conftest.py` points `DATABASE_URL` at a throwaway SQLite file *before*
+importing `db`, which reads it at import time. Without that ordering the
+suite would run against the deployed database. It works because
+`load_dotenv()` does not override variables that are already set.
+
+Two tests exist purely to protect decisions that are easy to undo by
+accident: one monkeypatches the session factory to raise and asserts
+`/health` still returns 200, and one fires twelve origins at the CORS
+regex, including a suffix attack and an unanchored-prefix attack.
+
 ### Redux and react-window are deliberately oversized
 
 With ~100 rows, `useState` and a plain `<table>` would do the job. Both are
@@ -168,8 +196,13 @@ Most tutorials online still show v1 and won't compile against v2.
 - The API caps `limit` at 200, and there's no pagination. Fine at 100 records;
   the first thing to fix before ingesting many more cities.
 - Ingestion runs as a manual operator script rather than on a schedule.
-- Five shadcn primitives (`card`, `badge`, `dialog`, `input`, `select`) are
-  installed but unused; the filters and badges are hand-rolled.
+- Only two cities. The product argument is about scale, and two cities
+  gesture at it rather than demonstrate it.
+- The unique constraint on `(source_client, legistar_matter_id)` was added
+  after the deployed table was created, so it exists in the model and in any
+  fresh database, but the deployed Neon table needs a one-time
+  `ALTER TABLE`. There is no migration tool here; a real project would use
+  Alembic rather than `create_all`.
 
 ## Running it
 
@@ -183,12 +216,24 @@ docker compose up -d
 
 ### 2. Backend
 
+On Mac/Linux:
+
 ```bash
 cd backend
 python3 -m venv venv
-venv\Scripts\activate        # on Windows (use `source venv/bin/activate` on Mac/Linux)
+source venv/bin/activate
 pip install -r requirements.txt
-copy .env.example .env       # on Windows (use `cp .env.example .env` on Mac/Linux)
+cp .env.example .env
+```
+
+On Windows (PowerShell):
+
+```powershell
+cd backend
+py -m venv venv
+venv\Scripts\activate
+pip install -r requirements.txt
+copy .env.example .env
 ```
 
 Then open `.env` and set `LLM_API_KEY`. The default provider is **Google
@@ -224,8 +269,14 @@ In a second terminal, with the backend still running:
 ```bash
 cd frontend
 npm install
-copy .env.local.example .env.local    # cp on Mac/Linux
 npm run dev
+```
+
+The frontend defaults to `http://localhost:8000` for the API. To point it
+somewhere else, create `frontend/.env.local` with a single line:
+
+```
+NEXT_PUBLIC_API_URL=http://localhost:8000
 ```
 
 Open `http://localhost:3000`.
@@ -233,7 +284,7 @@ Open `http://localhost:3000`.
 ### Trying other cities
 
 Legistar client IDs come from a city's Legistar subdomain, e.g.
-`https://seattle.legistar.com` → client ID `seattle`. To check whether a
+`https://seattle.legistar.com` gives the client ID `seattle`. To check whether a
 city's data is public before ingesting it, visit this URL in your browser:
 
 ```
@@ -245,9 +296,10 @@ If that returns JSON (not an error), it works.
 ## What's next
 
 - Ingest more cities so the dataset reflects the scale of the problem
-- Test coverage for the JSON parsing and score validation
 - Schedule ingestion instead of running it by hand
 - Pagination, needed before the dataset outgrows the 200-record cap
+- Alembic migrations, so a schema change does not need a hand-written
+  `ALTER TABLE` against the deployed database
 
 ## A note on data
 

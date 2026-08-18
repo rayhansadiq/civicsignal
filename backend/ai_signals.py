@@ -34,7 +34,7 @@ load_dotenv()
 # These three values are all that change if you swap LLM providers.
 API_KEY = os.getenv("LLM_API_KEY")
 BASE_URL = os.getenv("LLM_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai/")
-MODEL = os.getenv("LLM_MODEL", "gemini-2.5-flash")
+MODEL = os.getenv("LLM_MODEL", "gemini-3.5-flash-lite")
 
 # Gemini's free tier allows roughly 10 requests/minute. We space requests out
 # rather than firing them all at once and collecting 429s. Override via .env

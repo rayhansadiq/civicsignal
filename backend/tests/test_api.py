@@ -126,8 +126,16 @@ class TestSingleSignal:
         first = client.get("/api/signals?limit=1").json()["results"][0]
         assert client.get(f"/api/signals/{first['id']}").json()["id"] == first["id"]
 
-    def test_missing_id_returns_error_payload(self, client):
-        assert client.get("/api/signals/999999").json() == {"error": "not found"}
+    def test_missing_id_returns_404(self, client):
+        # Not a 200 with an error body. Clients branch on status codes, and
+        # an endpoint that answers 200 for a missing record forces every
+        # caller to inspect the payload to find out whether it worked.
+        res = client.get("/api/signals/999999")
+        assert res.status_code == 404
+        assert res.json() == {"detail": "Signal not found"}
+
+    def test_non_numeric_id_is_rejected(self, client):
+        assert client.get("/api/signals/not-a-number").status_code == 422
 
 
 class TestCors:

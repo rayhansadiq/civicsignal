@@ -9,7 +9,16 @@ end in an interview, structured the way a real signal product would need.
 
 import os
 from dotenv import load_dotenv
-from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, func
+from sqlalchemy import (
+    create_engine,
+    Column,
+    Integer,
+    String,
+    Text,
+    DateTime,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 load_dotenv()
@@ -29,11 +38,23 @@ class Matter(Base):
 
     __tablename__ = "matters"
 
+    # ingest.py checks for an existing row before inserting, but a check-then-
+    # insert is only as good as the assumption that nothing else is writing.
+    # Two ingest runs at once, or one retried after a timeout, would both pass
+    # the check and both insert. Stating the rule in the schema means the
+    # database enforces it no matter who is writing or how many of them there
+    # are, instead of it living in a comment and a hopeful query.
+    __table_args__ = (
+        UniqueConstraint(
+            "source_client", "legistar_matter_id", name="uq_matter_client_legistar_id"
+        ),
+    )
+
     id = Column(Integer, primary_key=True, index=True)
 
     # Which city/county this came from, and Legistar's own ID for it.
-    # (source_client + legistar_matter_id) uniquely identifies a record;
-    # the same MatterId could theoretically repeat across different cities.
+    # The same MatterId can repeat across different cities, so neither column
+    # identifies a record on its own; the pair does.
     source_client = Column(String, index=True)       # e.g. "seattle", "oakland"
     legistar_matter_id = Column(Integer, index=True)
 

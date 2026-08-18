@@ -15,9 +15,9 @@ Run it directly:
 
 import argparse
 import sys
-from datetime import datetime
 
 import httpx
+from sqlalchemy.exc import IntegrityError
 
 from db import SessionLocal, Matter, init_db
 
@@ -53,7 +53,7 @@ def store_matters(client: str, records: list[dict]) -> int:
                 .first()
             )
             if existing:
-                continue  # don't duplicate on re-runs
+                continue  # don't duplicate on re-runs (fast path)
 
             matter = Matter(
                 source_client=client,
@@ -71,7 +71,16 @@ def store_matters(client: str, records: list[dict]) -> int:
             db.add(matter)
             stored += 1
 
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            # The unique constraint on (source_client, legistar_matter_id)
+            # caught something the check above missed, which means another
+            # writer inserted between the check and the commit. Losing this
+            # batch is correct: the rows are already in the database.
+            db.rollback()
+            print("Another ingest run stored these records first; nothing new added.")
+            stored = 0
     finally:
         db.close()
 

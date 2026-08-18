@@ -13,7 +13,7 @@ from contextlib import asynccontextmanager
 from typing import Optional
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, Depends, Query
+from fastapi import FastAPI, Depends, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
@@ -147,7 +147,11 @@ def list_signals(
 def get_signal(matter_id: int, db: Session = Depends(get_db)):
     matter = db.query(Matter).filter(Matter.id == matter_id).first()
     if not matter:
-        return {"error": "not found"}
+        # 404, not a 200 with an error body. A client cannot tell a missing
+        # record from a real one by status code alone if every response is
+        # 200, so error handling ends up sniffing the payload. The status
+        # code is the contract.
+        raise HTTPException(status_code=404, detail="Signal not found")
     return serialize(matter)
 
 
