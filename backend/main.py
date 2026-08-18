@@ -9,6 +9,7 @@ Deployed (Render):
 """
 
 import os
+from contextlib import asynccontextmanager
 from typing import Optional
 
 from dotenv import load_dotenv
@@ -21,7 +22,18 @@ from db import get_db, init_db, Matter
 
 load_dotenv()
 
-app = FastAPI(title="CivicSignal API", version="0.2.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Runs once before the app starts serving. Creates any missing tables so
+    # a fresh database (a new Neon branch, or the SQLite file the tests use)
+    # works without a manual migration step.
+    init_db()
+    yield
+    # Nothing to tear down: SQLAlchemy's pool closes with the process.
+
+
+app = FastAPI(title="CivicSignal API", version="0.2.0", lifespan=lifespan)
 
 # Which browser origins may call this API.
 #
@@ -56,11 +68,6 @@ app.add_middleware(
     allow_methods=["GET"],
     allow_headers=["*"],
 )
-
-
-@app.on_event("startup")
-def on_startup():
-    init_db()
 
 
 def serialize(matter: Matter) -> dict:

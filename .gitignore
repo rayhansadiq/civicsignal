@@ -4,6 +4,8 @@ backend/__pycache__/
 backend/.env
 *.pyc
 *.pyo
+.pytest_cache/
+backend/tests/test.db
 
 # --- Node / Next.js frontend ---
 frontend/node_modules/
