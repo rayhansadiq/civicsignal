@@ -1,6 +1,6 @@
 # CivicSignal
 
-**Live: https://civicsignal-git-main-rayhansadiq1.vercel.app**
+**Live: https://civicsignal-coral.vercel.app**
 
 A full-stack project that pulls real city/county legislation data and uses
 an LLM to turn it into "buying signals": a scored, categorized, plain
