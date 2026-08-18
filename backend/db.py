@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 from sqlalchemy import (
     create_engine,
     Column,
+    Index,
     Integer,
     String,
     Text,
@@ -38,25 +39,20 @@ class Matter(Base):
 
     __tablename__ = "matters"
 
-    # ingest.py checks for an existing row before inserting, but a check-then-
-    # insert is only as good as the assumption that nothing else is writing.
-    # Two ingest runs at once, or one retried after a timeout, would both pass
-    # the check and both insert. Stating the rule in the schema means the
-    # database enforces it no matter who is writing or how many of them there
-    # are, instead of it living in a comment and a hopeful query.
-    __table_args__ = (
-        UniqueConstraint(
-            "source_client", "legistar_matter_id", name="uq_matter_client_legistar_id"
-        ),
-    )
-
-    id = Column(Integer, primary_key=True, index=True)
+    # No index=True on the primary key: SQLAlchemy would build a second index
+    # identical to the one the primary key already maintains. On 200k rows that
+    # duplicate cost 4.4MB and bought nothing.
+    id = Column(Integer, primary_key=True)
 
     # Which city/county this came from, and Legistar's own ID for it.
     # The same MatterId can repeat across different cities, so neither column
     # identifies a record on its own; the pair does.
+    #
+    # No index=True on legistar_matter_id either: nothing ever looks it up
+    # alone. ingest.py always filters on both columns, which the unique
+    # constraint's own index already serves.
     source_client = Column(String, index=True)       # e.g. "seattle", "oakland"
-    legistar_matter_id = Column(Integer, index=True)
+    legistar_matter_id = Column(Integer)
 
     # Raw fields from Legistar (public data)
     matter_file = Column(String)          # e.g. "CB 118329", the file/bill number
@@ -76,6 +72,34 @@ class Matter(Base):
     signal_generated_at = Column(DateTime)
 
     created_at = Column(DateTime, server_default=func.now())
+
+    # Declared after the columns because these reference them directly.
+    #
+    # ingest.py checks for an existing row before inserting, but a check-then-
+    # insert is only as good as the assumption that nothing else is writing.
+    # Two ingest runs at once, or one retried after a timeout, would both pass
+    # the check and both insert. Stating the rule in the schema means the
+    # database enforces it no matter who is writing, instead of it living in a
+    # comment and a hopeful query.
+    #
+    # Each index below exists because a measurement asked for it, not because
+    # the column looked important. Timings are from EXPLAIN ANALYZE against
+    # 200,000 seeded rows; see README, "Indexes chosen by measurement".
+    __table_args__ = (
+        UniqueConstraint(
+            "source_client", "legistar_matter_id", name="uq_matter_client_legistar_id"
+        ),
+        # Every /api/signals response ends in ORDER BY signal_score DESC LIMIT n.
+        # Without this, answering with 100 rows means sorting all 200,000.
+        # 57ms -> 0.14ms.
+        Index("ix_matters_score_desc", signal_score.desc()),
+        # Filter by category or city, then sort by score. Putting the sort
+        # column in the index means rows arrive already ordered, so the scan
+        # stops at the limit instead of reading everything first.
+        # 40ms -> 0.16ms.
+        Index("ix_matters_cat_score", "signal_category", signal_score.desc()),
+        Index("ix_matters_client_score", "source_client", signal_score.desc()),
+    )
 
 
 def init_db():

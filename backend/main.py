@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, Depends, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-from sqlalchemy import desc
+from sqlalchemy import desc, func
 
 from db import get_db, init_db, Matter
 
@@ -157,9 +157,21 @@ def get_signal(matter_id: int, db: Session = Depends(get_db)):
 
 @app.get("/api/stats")
 def stats(db: Session = Depends(get_db)):
-    scored = db.query(Matter).filter(Matter.signal_score.isnot(None))
-    total = scored.count()
-    high_signal = scored.filter(Matter.signal_score >= 70).count()
+    # Both numbers come from one query rather than two.
+    #
+    # The obvious version runs COUNT twice, which means two network round
+    # trips to a database that is not on this machine. The database is on
+    # Neon and the API is on Render, so each round trip costs more than the
+    # counting does. A filtered aggregate gets both numbers from a single
+    # pass over the same index.
+    total, high_signal = (
+        db.query(
+            func.count(Matter.id),
+            func.count(Matter.id).filter(Matter.signal_score >= 70),
+        )
+        .filter(Matter.signal_score.isnot(None))
+        .one()
+    )
     return {
         "total_scored": total,
         "high_signal_count": high_signal,

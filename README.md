@@ -63,6 +63,7 @@ civicsignal/
 │   ├── ai_signals.py      # Scores + summarizes matters with an LLM
 │   ├── db.py              # SQLAlchemy model + session
 │   ├── migrate_db.py      # Copies rows between databases (local -> Neon)
+│   ├── sql/indexes.sql    # Brings an existing database up to date with the model
 │   ├── tests/             # pytest: parsing, validation, endpoints, CORS
 │   └── requirements.txt
 ├── frontend/
@@ -146,6 +147,70 @@ Two consequences worth knowing:
 - The free tier allows ~10 requests/minute, so the script paces itself and
   retries with backoff. `--limit N` caps a run to protect a daily quota.
 
+### Indexes chosen by measurement, not by intuition
+
+The dataset here is 100 rows, where every query is instant and every index
+looks unnecessary. So rather than guess at what would matter at the scale
+this models, I seeded a local Postgres with **200,000 rows** across 40
+cities and measured.
+
+Median of 15 to 25 requests, end to end over HTTP:
+
+| Request | No indexes | B-tree | + trigram |
+|---|---|---|---|
+| Default list | 47.7ms | 10.3ms | 10.3ms |
+| Category filter | 43.5ms | 10.5ms | 10.6ms |
+| City filter | 26.1ms | 11.6ms | - |
+| `min_score` filter | 41.1ms | 13.3ms | - |
+| Search, common term | 189ms | 11.6ms | 11.7ms |
+| Search, no match | 178ms | 184ms | **6.5ms** |
+
+Three things came out of this that I would not have predicted:
+
+**The sort was the bottleneck, not the filters.** Every response ends in
+`ORDER BY signal_score DESC LIMIT n`, so returning 100 rows meant reading and
+sorting all 200,000. An index on the sort column turns that into an index
+scan that stops at the limit: 57ms to 0.14ms at the query level, and 47.7ms
+to 10.3ms end to end. The gap between those two numbers is the useful part.
+The remaining 10ms is JSON serialization and HTTP, so further database
+tuning would buy nothing.
+
+**Search was already fixed, except when it wasn't.** With the score index in
+place, a search for a common term is fast without any text index, because
+Postgres walks the index in score order and stops once it has 100 matches. A
+search that matches *nothing* has no early exit, so it reads every row: 184ms.
+Trigram indexes fix that specific case, 28x. Users search for the unusual
+thing, so the slow path is the common one.
+
+**Two indexes were pure cost.** `index=True` on the primary key built a second
+index identical to the one the primary key already maintains, and nothing ever
+looked up `legistar_matter_id` on its own. Together they were 8.8MB of write
+overhead buying nothing. Removing them left the API measurably faster to
+write to and identical to read from.
+
+`/api/stats` also went from two `COUNT` queries to one filtered aggregate.
+That barely registers locally, but the database is on Neon and the API is on
+Render, so the saving is a network round trip rather than CPU.
+
+### create_all does not migrate
+
+Worth stating plainly, because it cost me a confusing benchmark run:
+SQLAlchemy's `create_all()` checks whether each *table* exists and skips it
+entirely if it does. It never compares the existing table against the model.
+So an index or constraint added after a table was first created is silently
+never built.
+
+A fresh database gets everything. A database that already has `matters` gets
+nothing. `backend/sql/indexes.sql` exists to close that gap by hand, and is
+idempotent so it can be re-run safely:
+
+```bash
+psql "$DATABASE_URL" -f sql/indexes.sql
+```
+
+This is what a migration tool is for, and a production project would use
+Alembic instead of a hand-maintained SQL file.
+
 ### Tests target the code most likely to be silently wrong
 
 ```bash
@@ -198,11 +263,14 @@ Most tutorials online still show v1 and won't compile against v2.
 - Ingestion runs as a manual operator script rather than on a schedule.
 - Only two cities. The product argument is about scale, and two cities
   gesture at it rather than demonstrate it.
-- The unique constraint on `(source_client, legistar_matter_id)` was added
-  after the deployed table was created, so it exists in the model and in any
-  fresh database, but the deployed Neon table needs a one-time
-  `ALTER TABLE`. There is no migration tool here; a real project would use
-  Alembic rather than `create_all`.
+- The unique constraint and the indexes were added after the deployed table
+  was created. They exist in the model and in any fresh database, but the
+  deployed Neon table needs `sql/indexes.sql` run against it once, because
+  `create_all` does not alter existing tables. There is no migration tool
+  here; a real project would use Alembic.
+- The benchmark numbers above come from synthetic rows on local Postgres.
+  They show the shape of the problem honestly, but a managed database over a
+  network will not reproduce them exactly.
 
 ## Running it
 
